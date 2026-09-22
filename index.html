@@ -1,0 +1,851 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Math Café AR 🍰</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- MediaPipe for AR Hands -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Kanit:wght@400;600;800&family=Fredoka+One&display=swap" rel="stylesheet">
+    
+    <style>
+        body {
+            font-family: 'Kanit', sans-serif;
+            background: linear-gradient(135deg, #fdf4ff, #e0e7ff);
+            overflow: hidden;
+            touch-action: none;
+        }
+        .font-header { font-family: 'Fredoka One', 'Kanit', cursive; }
+        
+        .glass-panel {
+            background: rgba(255, 255, 255, 0.85);
+            backdrop-filter: blur(10px);
+            border: 2px solid rgba(255, 255, 255, 0.5);
+            box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.15);
+        }
+        
+        #game-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            z-index: 10;
+        }
+
+        #video-element { display: none; }
+
+        .ui-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            z-index: 20;
+            pointer-events: none;
+        }
+        
+        .interactive { pointer-events: auto; }
+
+        .bounce-anim { animation: bounce 2s infinite; }
+        @keyframes bounce {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-10px); }
+        }
+
+        .level-up-anim { animation: scaleUp 1s ease-out; }
+        @keyframes scaleUp {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.3); color: #ec4899; }
+            100% { transform: scale(1); }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Video element for MediaPipe -->
+    <video id="video-element" autoplay playsinline></video>
+
+    <!-- Main Game Canvas -->
+    <canvas id="game-canvas"></canvas>
+
+    <!-- UI Overlay -->
+    <div class="ui-layer flex flex-col justify-between">
+        
+        <!-- HUD -->
+        <div id="hud" class="hidden w-full p-4 flex justify-between items-start">
+            <!-- Left Side: Name, Score, Timer (Stacked vertically) -->
+            <div class="flex flex-col gap-3">
+                <!-- Player Name -->
+                <div class="glass-panel rounded-2xl px-4 py-2 shadow flex items-center gap-2">
+                    <span class="text-xl">👤</span>
+                    <span id="display-name" class="font-bold text-indigo-700 text-lg">ผู้เล่น</span>
+                </div>
+                <!-- Score -->
+                <div class="glass-panel rounded-2xl p-3 shadow text-center border-l-4 border-pink-500 w-32">
+                    <p class="text-pink-600 font-bold text-xs uppercase tracking-wider">💰 ยอดขาย</p>
+                    <p id="display-score" class="font-header text-4xl text-pink-500 mt-1">0</p>
+                </div>
+                <!-- Timer (ย้ายมาอยู่ใต้ยอดขาย) -->
+                <div class="glass-panel rounded-2xl p-3 shadow text-center border-l-4 border-rose-500 w-32">
+                    <p class="text-rose-600 font-bold text-xs uppercase tracking-wider">⏳ เวลา</p>
+                    <p id="display-timer" class="font-header text-3xl text-rose-500 mt-1">7:00</p>
+                </div>
+            </div>
+
+            <!-- Right Side: Shop Level & Theme -->
+            <div class="flex flex-col gap-3 items-end">
+                <div id="shop-panel" class="glass-panel rounded-2xl p-3 shadow text-center border-r-4 border-yellow-400">
+                    <p class="text-yellow-600 font-bold text-xs uppercase tracking-wider">
+                        เลเวล <span id="display-level">1</span>
+                    </p>
+                    <p id="display-shop-name" class="font-bold text-lg text-indigo-700 mt-1">ร้านขนมหวาน</p>
+                    <div id="display-unlocks" class="text-2xl mt-1 flex justify-center gap-1">🧁</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Start Screen -->
+        <div id="start-screen" class="interactive absolute inset-0 flex items-center justify-center bg-white/40 backdrop-blur-md">
+            <div class="glass-panel rounded-3xl p-8 max-w-md w-11/12 text-center shadow-2xl">
+                <h1 class="font-header text-5xl text-pink-500 mb-2 bounce-anim">Math Café<br>AR 🍰</h1>
+                <p class="text-gray-600 mb-6 font-semibold">บริหารร้าน 7 ระดับ ตอบโจทย์ลูกค้า!</p>
+                
+                <div class="mb-6 text-left">
+                    <input type="text" id="input-name" placeholder="พิมพ์ชื่อเถ้าแก่..." class="w-full px-4 py-3 rounded-xl border-2 border-pink-200 focus:outline-none focus:border-pink-500 text-lg font-bold text-center">
+                </div>
+
+                <div class="bg-indigo-50 rounded-xl p-4 mb-6 text-sm text-indigo-800 text-left">
+                    <p class="font-bold mb-1">🎮 วิธีเล่น (มีเวลา 7 นาที):</p>
+                    <ul class="list-disc pl-5 space-y-1">
+                        <li>เล่นโหมด AR ใช้นิ้วชี้แตะกล้อง หรือโหมดปกติใช้เมาส์/นิ้วแตะจอ</li>
+                        <li>แตะอาหารที่มีคำตอบถูกต้อง ลูกค้าจะกินและดีใจ!</li>
+                        <li>ทุก 50 คะแนน ร้านจะอัปเกรดเป็นเมนูใหม่!</li>
+                    </ul>
+                </div>
+
+                <div id="start-buttons" class="flex flex-col gap-3">
+                    <button id="btn-start-ar" class="w-full bg-gradient-to-r from-pink-500 to-rose-500 hover:from-pink-600 hover:to-rose-600 text-white font-header text-2xl py-4 rounded-2xl shadow-lg transform transition hover:scale-105 active:scale-95">
+                        📷 เปิดร้าน (AR)
+                    </button>
+                    <button id="btn-start-normal" class="w-full bg-gradient-to-r from-blue-400 to-indigo-500 hover:from-blue-500 hover:to-indigo-600 text-white font-header text-xl py-3 rounded-2xl shadow-lg transform transition hover:scale-105 active:scale-95">
+                        👆 โหมดปกติ (ไม่เปิดกล้อง)
+                    </button>
+                </div>
+                <p id="loading-msg" class="text-sm text-pink-600 mt-4 hidden animate-pulse font-bold">กำลังเตรียมร้าน... โปรดรอสักครู่</p>
+            </div>
+        </div>
+
+        <!-- Game Over Screen -->
+        <div id="game-over-screen" class="interactive hidden absolute inset-0 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+            <div class="glass-panel rounded-3xl p-8 max-w-md w-11/12 text-center shadow-2xl transform scale-0 transition-transform duration-500" id="game-over-panel">
+                <h2 class="font-header text-4xl text-white drop-shadow-md mb-2">หมดเวลา! ⏰</h2>
+                <p class="text-indigo-100 mb-6 text-lg">ผลประกอบการของคุณ <span id="summary-name" class="font-bold text-pink-300"></span></p>
+                
+                <div class="bg-white rounded-2xl p-6 mb-6 shadow-inner">
+                    <p class="text-gray-500 font-bold text-sm">ยอดขายรวม</p>
+                    <p id="summary-score" class="font-header text-6xl text-pink-500 my-2">0</p>
+                    <div class="flex justify-between items-center mt-4 pt-4 border-t-2 border-gray-100">
+                        <span class="font-bold text-gray-600">สถานะร้านสูงสุด:</span>
+                        <span id="summary-shop" class="font-bold text-xl text-yellow-500">ร้านขนมหวาน 🧁</span>
+                    </div>
+                </div>
+
+                <div class="flex flex-col gap-3">
+                    <button id="btn-restart" class="w-full bg-indigo-500 hover:bg-indigo-600 text-white font-header text-xl py-4 rounded-2xl shadow-lg transform transition hover:scale-105 active:scale-95">
+                        🔄 เล่นอีกครั้ง
+                    </button>
+                    <button id="btn-home" class="w-full bg-pink-400 hover:bg-pink-500 text-white font-header text-xl py-4 rounded-2xl shadow-lg transform transition hover:scale-105 active:scale-95">
+                        🏠 กลับหน้าหลัก
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ข้อมูลเลเวลทั้ง 7 ร้าน
+        const SHOPS = [
+            { name: "ร้านขนมหวาน", icon: "🧁", items: ['🧁', '🍩', '🍪', '🍰', '🥞'] },
+            { name: "ร้านชานม", icon: "🧋", items: ['🧋', '🥤', '🍵', '☕', '🍹'] },
+            { name: "ร้านซูชิ", icon: "🍣", items: ['🍣', '🍙', '🍤', '🍱', '🍥'] },
+            { name: "ร้านพิซซ่า", icon: "🍕", items: ['🍕', '🧀', '🍄', '🌭', '🍟'] },
+            { name: "ร้านเบอร์เกอร์", icon: "🍔", items: ['🍔', '🍟', '🌭', '🍗', '🥪'] },
+            { name: "ร้านผลไม้", icon: "🍎", items: ['🍎', '🍌', '🍓', '🍇', '🍉'] },
+            { name: "ภัตตาคารหรู", icon: "🥩", items: ['🥩', '🦞', '🥗', '🍲', '🍝'] }
+        ];
+
+        // ลูกค้า
+        const CUSTOMERS = [
+            { normal: '👧', happy: '🥰', sad: '😢' },
+            { normal: '👦', happy: '🤩', sad: '😭' },
+            { normal: '👨', happy: '😁', sad: '😞' },
+            { normal: '👩', happy: '😊', sad: '😩' },
+            { normal: '👵', happy: '👵✨', sad: '👵💧' }
+        ];
+
+        // สถานะของเกม
+        const state = {
+            playerName: "ผู้เล่น",
+            score: 0,
+            level: 1, // 1 to 7
+            timeLeft: 420, // 7 นาที (7 * 60 = 420 วินาที)
+            isPlaying: false,
+            cameraReady: false,
+            lastTime: 0,
+            customer: null,
+            items: [],
+            particles: [],
+            fingerPos: null,
+            lastProblem: "" // เก็บโจทย์ล่าสุดเพื่อป้องกันการซ้ำ
+        };
+
+        let audioCtx;
+        function initAudio() {
+            if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+        }
+
+        function playSound(type) {
+            if (!audioCtx) return;
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+            const now = audioCtx.currentTime;
+
+            if (type === 'pop') {
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(400, now);
+                osc.frequency.exponentialRampToValueAtTime(800, now + 0.1);
+                gain.gain.setValueAtTime(0.5, now);
+                gain.gain.exponentialRampToValueAtTime(0.01, now + 0.1);
+                osc.start(now); osc.stop(now + 0.1);
+            } else if (type === 'cheer') {
+                // เสียงดีใจตอนตอบถูก (เสียงใสๆ แบบกระดิ่ง/เหรียญ)
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(880, now); // A5
+                osc.frequency.setValueAtTime(1046.50, now + 0.1); // C6
+                osc.frequency.setValueAtTime(1318.51, now + 0.2); // E6
+                gain.gain.setValueAtTime(0.3, now);
+                gain.gain.linearRampToValueAtTime(0, now + 0.4);
+                osc.start(now); osc.stop(now + 0.4);
+            } else if (type === 'wrong') {
+                osc.type = 'sawtooth';
+                osc.frequency.setValueAtTime(250, now);
+                osc.frequency.exponentialRampToValueAtTime(100, now + 0.3);
+                gain.gain.setValueAtTime(0.3, now);
+                gain.gain.linearRampToValueAtTime(0, now + 0.3);
+                osc.start(now); osc.stop(now + 0.3);
+            } else if (type === 'chew') {
+                // เสียงเคี้ยว
+                const bufferSize = audioCtx.sampleRate * 0.15;
+                const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+                const data = buffer.getChannelData(0);
+                for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
+                const noise = audioCtx.createBufferSource();
+                noise.buffer = buffer;
+                const filter = audioCtx.createBiquadFilter();
+                filter.type = 'lowpass';
+                filter.frequency.value = 800;
+                noise.connect(filter); filter.connect(gain);
+                gain.gain.setValueAtTime(0.4, now);
+                gain.gain.exponentialRampToValueAtTime(0.01, now + 0.15);
+                noise.start(now);
+            } else if (type === 'levelup') {
+                osc.type = 'square';
+                osc.frequency.setValueAtTime(300, now);
+                osc.frequency.setValueAtTime(400, now + 0.1);
+                osc.frequency.setValueAtTime(500, now + 0.2);
+                osc.frequency.setValueAtTime(600, now + 0.3);
+                osc.frequency.setValueAtTime(800, now + 0.4);
+                gain.gain.setValueAtTime(0.2, now);
+                gain.gain.linearRampToValueAtTime(0, now + 0.6);
+                osc.start(now); osc.stop(now + 0.6);
+            }
+        }
+
+        const canvas = document.getElementById('game-canvas');
+        const ctx = canvas.getContext('2d');
+        const video = document.getElementById('video-element');
+        
+        const ui = {
+            startScreen: document.getElementById('start-screen'),
+            gameOverScreen: document.getElementById('game-over-screen'),
+            hud: document.getElementById('hud'),
+            btnStartAR: document.getElementById('btn-start-ar'),
+            btnStartNormal: document.getElementById('btn-start-normal'),
+            startButtons: document.getElementById('start-buttons'),
+            btnRestart: document.getElementById('btn-restart'),
+            inputName: document.getElementById('input-name'),
+            loadingMsg: document.getElementById('loading-msg'),
+            displayName: document.getElementById('display-name'),
+            displayScore: document.getElementById('display-score'),
+            displayTimer: document.getElementById('display-timer'),
+            displayLevel: document.getElementById('display-level'),
+            displayShopName: document.getElementById('display-shop-name'),
+            displayUnlocks: document.getElementById('display-unlocks'),
+            shopPanel: document.getElementById('shop-panel'),
+            gameOverPanel: document.getElementById('game-over-panel'),
+            summaryName: document.getElementById('summary-name'),
+            summaryScore: document.getElementById('summary-score'),
+            summaryShop: document.getElementById('summary-shop'),
+            btnHome: document.getElementById('btn-home')
+        };
+
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+
+        function rand(min, max) { return Math.floor(Math.random() * (max - min + 1)) + min; }
+
+        function generateProblem(level) {
+            let num1, num2, op, ans, text;
+            const ops = ['+', '-', '×', '÷'];
+            let attempts = 0;
+
+            // สุ่มจนกว่าจะได้โจทย์ที่ไม่ซ้ำกับข้อที่แล้ว
+            do {
+                switch(level) {
+                    case 1: 
+                        // Lv 1: บวก ลบ เลขหลักเดียว/สิบต้นๆ
+                        op = ops[rand(0, 1)];
+                        if(op === '+') { 
+                            num1 = rand(1, 15); num2 = rand(1, 9); ans = num1 + num2; 
+                        } else { 
+                            num1 = rand(5, 20); num2 = rand(1, 9); 
+                            while (num1 <= num2) num1 = rand(5, 20);
+                            ans = num1 - num2; 
+                        }
+                        break;
+                    case 2: 
+                        // Lv 2: บวก ลบ เลข 2 หลัก
+                        op = ops[rand(0, 1)];
+                        if(op === '+') { 
+                            num1 = rand(10, 49); num2 = rand(10, 49); ans = num1 + num2; 
+                        } else { 
+                            num1 = rand(20, 99); num2 = rand(10, 49); 
+                            while (num1 <= num2) num1 = rand(20, 99);
+                            ans = num1 - num2; 
+                        }
+                        break;
+                    case 3: 
+                        // Lv 3: สูตรคูณ แม่ 2 ถึง 9
+                        op = '×'; 
+                        num1 = rand(2, 9); num2 = rand(2, 9); ans = num1 * num2;
+                        break;
+                    case 4: 
+                        // Lv 4: การหารลงตัว
+                        op = '÷'; 
+                        ans = rand(2, 9); num2 = rand(2, 9); num1 = num2 * ans;
+                        break;
+                    case 5: 
+                        // Lv 5: คละ บวก ลบ คูณ หาร (ระดับกลาง)
+                        op = ops[rand(0, 3)];
+                        if(op === '+') { num1 = rand(50, 99); num2 = rand(20, 99); ans = num1 + num2; }
+                        else if(op === '-') { num1 = rand(50, 150); num2 = rand(20, 80); while(num1 <= num2) num1 = rand(50, 150); ans = num1 - num2; }
+                        else if(op === '×') { num1 = rand(5, 12); num2 = rand(3, 9); ans = num1 * num2; }
+                        else { ans = rand(3, 12); num2 = rand(3, 9); num1 = num2 * ans; }
+                        break;
+                    case 6: 
+                        // Lv 6: คูณเลข 2 หลัก กับ 1 หลัก, หารเลขหลักสิบ
+                        op = ops[rand(2, 3)]; 
+                        if (op === '×') { num1 = rand(11, 25); num2 = rand(3, 9); ans = num1 * num2; }
+                        else { ans = rand(11, 25); num2 = rand(3, 9); num1 = num2 * ans; }
+                        break;
+                    case 7:
+                        // Lv 7: คละทุกอย่างแบบยาก
+                        op = ops[rand(0, 3)];
+                        if (op === '+') { num1 = rand(100, 499); num2 = rand(100, 499); ans = num1 + num2; }
+                        else if (op === '-') { num1 = rand(200, 999); num2 = rand(50, 300); while (num1 <= num2) num1 += 100; ans = num1 - num2; }
+                        else if (op === '×') { num1 = rand(12, 35); num2 = rand(5, 12); ans = num1 * num2; }
+                        else { ans = rand(12, 35); num2 = rand(4, 12); num1 = num2 * ans; }
+                        break;
+                }
+                text = `${num1} ${op} ${num2}`;
+                attempts++;
+            } while (text === state.lastProblem && attempts < 5);
+
+            state.lastProblem = text;
+            return { text: text, answer: ans };
+        }
+
+        function createParticles(x, y, color, count) {
+            for (let i = 0; i < count; i++) {
+                state.particles.push({
+                    x: x, y: y,
+                    vx: (Math.random() - 0.5) * 12,
+                    vy: (Math.random() - 0.5) * 12 - 5,
+                    life: 1.0,
+                    color: color,
+                    size: Math.random() * 8 + 4
+                });
+            }
+        }
+
+        function spawnCustomer() {
+            if (!state.isPlaying) return;
+            const prob = generateProblem(state.level);
+            const charObj = CUSTOMERS[Math.floor(Math.random() * CUSTOMERS.length)];
+            
+            state.customer = {
+                char: charObj,
+                emoji: charObj.normal,
+                problem: prob.text,
+                answer: prob.answer,
+                x: -150, // เริ่มนอกจอทางซ้าย
+                y: canvas.height * 0.45,
+                targetX: canvas.width * 0.5,
+                radius: Math.min(canvas.width, canvas.height) * 0.14, // ลดขนาดลงนิดนึงเพื่อไม่ให้บังเยอะ
+                state: 'walking_in',
+                direction: 1, // 1=ขวา, -1=ซ้าย
+                timer: 0,
+                bounce: 0
+            };
+
+            // สร้างตัวเลือก 5 ชิ้นเสมอ
+            state.items = [];
+            let answers = [prob.answer];
+            
+            while(answers.length < 5) {
+                // สร้างคำตอบหลอกให้อิงกับคำตอบจริงเพื่อความแนบเนียน
+                let maxOffset = Math.max(8, Math.floor(prob.answer * 0.2)); 
+                let offset = rand(-maxOffset, maxOffset);
+                if (offset === 0) offset = rand(1, 3);
+                
+                let fake = prob.answer + offset;
+                if (fake > 0 && !answers.includes(fake)) answers.push(fake);
+            }
+            answers.sort(() => Math.random() - 0.5); // สลับตำแหน่ง
+
+            const currentShopItems = SHOPS[state.level - 1].items;
+            const spacing = canvas.width / 6;
+
+            answers.forEach((ans, i) => {
+                const itemIcon = currentShopItems[i % currentShopItems.length];
+                state.items.push({
+                    id: i,
+                    text: ans,
+                    emoji: itemIcon,
+                    x: spacing * (i + 1),
+                    y: canvas.height + 150, // เริ่มจากข้างล่างจอ
+                    targetY: canvas.height * 0.75 + (i % 2 === 0 ? 15 : -15), // สลับความสูงนิดๆ
+                    baseY: canvas.height * 0.75 + (i % 2 === 0 ? 15 : -15),
+                    radius: canvas.width < 600 ? 45 : 65, // ขยายวงกลมคำตอบให้ใหญ่ขึ้นจิ้มง่าย
+                    isCorrect: ans === prob.answer,
+                    active: false
+                });
+            });
+        }
+
+        function updateShopUI() {
+            const shop = SHOPS[state.level - 1];
+            ui.displayLevel.textContent = state.level;
+            ui.displayShopName.textContent = shop.name;
+            ui.displayUnlocks.innerHTML = shop.items.join('');
+            
+            ui.shopPanel.classList.remove('level-up-anim');
+            void ui.shopPanel.offsetWidth; 
+            ui.shopPanel.classList.add('level-up-anim');
+        }
+
+        function checkLevelUp() {
+            // อัปเกรดทุกๆ 50 คะแนน, เลเวลสูงสุดคือ 7
+            let nextLevel = Math.min(7, Math.floor(state.score / 50) + 1);
+            if (nextLevel > state.level) {
+                state.level = nextLevel;
+                updateShopUI();
+                playSound('levelup');
+                createParticles(canvas.width/2, 100, '#fbbf24', 80); // พลุสีทอง
+            }
+        }
+
+        function handleAnswer(item) {
+            if (!state.customer || state.customer.state !== 'waiting' || !item.active) return;
+            
+            item.active = false;
+            
+            if (item.isCorrect) {
+                state.customer.state = 'eating';
+                state.customer.emoji = state.customer.char.happy;
+                playSound('cheer'); // เสียงดีใจ
+                setTimeout(() => playSound('chew'), 200); // เสียงเคี้ยวตามมาติดๆ
+                
+                // ขนมลอยเข้าปากลูกค้า
+                item.targetX = state.customer.x;
+                item.targetY = state.customer.y;
+                
+                state.score += 10;
+                ui.displayScore.textContent = state.score;
+                ui.displayScore.classList.add('bounce-anim');
+                setTimeout(() => ui.displayScore.classList.remove('bounce-anim'), 500);
+                
+                createParticles(item.x, item.y, '#4ade80', 30);
+                checkLevelUp();
+                
+            } else {
+                state.customer.state = 'sad';
+                state.customer.emoji = state.customer.char.sad;
+                playSound('wrong');
+                createParticles(item.x, item.y, '#f87171', 20);
+                item.targetY = canvas.height + 150; // ร่วงลงล่างจอ
+            }
+        }
+
+        function gameLoop(timestamp) {
+            if (!state.lastTime) state.lastTime = timestamp;
+            const deltaTime = timestamp - state.lastTime;
+            state.lastTime = timestamp;
+
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // 1. วาดวิดีโอจากกล้อง (สลับซ้ายขวาให้เป็นกระจก)
+            if (state.cameraReady && video.readyState === 4) {
+                ctx.save();
+                ctx.scale(-1, 1);
+                const vRatio = video.videoWidth / video.videoHeight;
+                const cRatio = canvas.width / canvas.height;
+                let drawW, drawH, startX, startY;
+                
+                if (cRatio > vRatio) {
+                    drawW = canvas.width; drawH = canvas.width / vRatio;
+                    startX = 0; startY = (canvas.height - drawH) / 2;
+                } else {
+                    drawW = canvas.height * vRatio; drawH = canvas.height;
+                    startX = (canvas.width - drawW) / 2; startY = 0;
+                }
+                ctx.drawImage(video, -startX - drawW, startY, drawW, drawH);
+                ctx.restore();
+            } else if (state.isPlaying) {
+                // สีพื้นหลังสำรองถ้าไม่มีกล้อง หรือเลือกโหมดปกติ
+                const bgGradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
+                bgGradient.addColorStop(0, '#fdf4ff'); // ชมพูอ่อน
+                bgGradient.addColorStop(1, '#e0e7ff'); // ม่วงอ่อน
+                ctx.fillStyle = bgGradient;
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+            }
+
+            if (state.isPlaying) {
+                // 2. วาดลูกค้า
+                if (state.customer) {
+                    let c = state.customer;
+                    c.timer += deltaTime;
+
+                    if (c.state === 'walking_in') {
+                        c.direction = 1; // หันขวา
+                        c.x += (c.targetX - c.x) * 0.05;
+                        c.bounce = Math.abs(Math.sin(c.timer * 0.01)) * 15;
+                        if (Math.abs(c.targetX - c.x) < 5) {
+                            c.x = c.targetX; c.state = 'waiting'; c.timer = 0;
+                            state.items.forEach(d => d.active = true);
+                            playSound('pop');
+                        }
+                    } else if (c.state === 'waiting') {
+                        c.bounce = Math.sin(c.timer * 0.005) * 5;
+                    } else if (c.state === 'eating') {
+                        c.bounce = Math.abs(Math.sin(c.timer * 0.03)) * 20;
+                        if (c.timer > 1500) { c.state = 'walking_out'; c.timer = 0; }
+                    } else if (c.state === 'sad') {
+                        c.bounce = 0;
+                        if (c.timer > 1500) { c.state = 'walking_out'; c.timer = 0; }
+                    } else if (c.state === 'walking_out') {
+                        c.direction = -1; // พลิกหันซ้ายเดินออก
+                        c.x -= 8;
+                        c.bounce = Math.abs(Math.sin(c.timer * 0.015)) * 15;
+                        state.items.forEach(d => d.targetY = canvas.height + 150);
+                        if (c.x < -200) spawnCustomer(); // คนใหม่มา
+                    }
+
+                    ctx.save();
+                    ctx.translate(c.x, c.y - c.bounce);
+                    
+                    // เงา
+                    ctx.fillStyle = 'rgba(0,0,0,0.3)';
+                    ctx.beginPath();
+                    ctx.ellipse(0, c.radius + c.bounce, c.radius*0.7, c.radius*0.2, 0, 0, Math.PI*2);
+                    ctx.fill();
+
+                    // พลิกตัวละครตามทิศทาง
+                    ctx.scale(c.direction, 1);
+
+                    // วงกลมพื้นหลังรองตัวลูกค้า (ให้เด่นชัด)
+                    ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+                    ctx.beginPath();
+                    ctx.arc(0, 0, c.radius, 0, Math.PI*2);
+                    ctx.fill();
+                    ctx.lineWidth = 6;
+                    ctx.strokeStyle = '#f472b6'; // สีชมพู
+                    ctx.stroke();
+
+                    // หน้าตาตัวละคร
+                    ctx.font = `${c.radius * 1.3}px Arial`;
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText(c.emoji, 0, c.radius * 0.1);
+                    ctx.restore();
+
+                    // กล่องข้อความโจทย์
+                    if (c.state === 'waiting') {
+                        const bx = c.x + (c.radius * 1.0);
+                        const by = c.y - c.radius - 20;
+                        ctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
+                        ctx.strokeStyle = '#3b82f6';
+                        ctx.lineWidth = 5;
+                        
+                        ctx.beginPath();
+                        // กล่องใหญ่ขึ้นเพื่อให้ตัวอักษรโจทย์ใหญ่
+                        ctx.roundRect(bx, by - 50, 220, 100, 20);
+                        ctx.fill(); ctx.stroke();
+                        
+                        // หางกล่องข้อความ
+                        ctx.beginPath();
+                        ctx.moveTo(bx + 20, by + 50);
+                        ctx.lineTo(bx + 35, by + 70);
+                        ctx.lineTo(bx + 50, by + 50);
+                        ctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
+                        ctx.fill(); ctx.stroke();
+
+                        ctx.fillStyle = '#1e3a8a';
+                        // ขยายตัวอักษรโจทย์ให้ชัดเจน
+                        ctx.font = 'bold 46px "Fredoka One", sans-serif';
+                        ctx.textAlign = 'center';
+                        ctx.textBaseline = 'middle';
+                        ctx.fillText(c.problem, bx + 110, by);
+                    }
+                }
+
+                // 3. วาดตัวเลือก (อาหาร)
+                state.items.forEach(d => {
+                    if (d.active) d.targetY = d.baseY + Math.sin(timestamp * 0.003 + d.id) * 10; // ลอยขึ้นลง
+                    d.x += (d.targetX !== undefined ? d.targetX : d.x - d.x) * 0.1;
+                    d.y += (d.targetY - d.y) * 0.1;
+
+                    ctx.save();
+                    ctx.translate(d.x, d.y);
+                    
+                    ctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
+                    ctx.beginPath();
+                    ctx.arc(0, 0, d.radius, 0, Math.PI*2);
+                    ctx.fill();
+                    ctx.lineWidth = 4;
+                    ctx.strokeStyle = '#fbbf24'; // สีเหลืองทอง
+                    ctx.stroke();
+
+                    // ขยับอีโมจิอาหารขึ้นนิดนึง
+                    ctx.font = `${d.radius * 1.0}px Arial`;
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText(d.emoji, 0, -d.radius*0.2);
+
+                    ctx.fillStyle = '#b91c1c'; // สีแดงเข้ม
+                    // ขยายฟอนต์คำตอบให้ใหญ่
+                    ctx.font = `bold ${d.radius*0.9}px Kanit`;
+                    ctx.fillText(d.text, 0, d.radius*0.35);
+
+                    ctx.restore();
+
+                    // ตรวจจับการแตะ (Collision) ของนิ้วกับขนม
+                    if (d.active && state.fingerPos) {
+                        const dx = state.fingerPos.x - d.x;
+                        const dy = state.fingerPos.y - d.y;
+                        if (Math.sqrt(dx*dx + dy*dy) < d.radius + 20) {
+                            handleAnswer(d);
+                        }
+                    }
+                });
+
+                // 4. วาดอนุภาค (Particles)
+                for (let i = state.particles.length - 1; i >= 0; i--) {
+                    let p = state.particles[i];
+                    p.x += p.vx; p.y += p.vy; p.vy += 0.5; p.life -= 0.02;
+                    if (p.life <= 0) state.particles.splice(i, 1);
+                    else {
+                        ctx.globalAlpha = p.life;
+                        ctx.fillStyle = p.color;
+                        ctx.beginPath();
+                        ctx.arc(p.x, p.y, p.size, 0, Math.PI*2);
+                        ctx.fill();
+                        ctx.globalAlpha = 1.0;
+                    }
+                }
+
+                // 5. วาดตำแหน่งนิ้วชี้
+                if (state.fingerPos) {
+                    ctx.fillStyle = 'rgba(236, 72, 153, 0.5)';
+                    ctx.beginPath(); ctx.arc(state.fingerPos.x, state.fingerPos.y, 25, 0, Math.PI*2); ctx.fill();
+                    ctx.fillStyle = '#ec4899';
+                    ctx.beginPath(); ctx.arc(state.fingerPos.x, state.fingerPos.y, 10, 0, Math.PI*2); ctx.fill();
+                }
+                state.fingerPos = null;
+            }
+            requestAnimationFrame(gameLoop);
+        }
+
+        function formatTime(seconds) {
+            const m = Math.floor(seconds / 60);
+            const s = seconds % 60;
+            return `${m}:${s < 10 ? '0' : ''}${s}`;
+        }
+
+        let timerInterval;
+        function updateTimer() {
+            if (!state.isPlaying) return;
+            state.timeLeft--;
+            ui.displayTimer.textContent = formatTime(state.timeLeft);
+            
+            if (state.timeLeft <= 10) ui.displayTimer.classList.add('text-red-600', 'animate-pulse');
+            if (state.timeLeft <= 0) endGame();
+        }
+
+        function endGame() {
+            state.isPlaying = false;
+            clearInterval(timerInterval);
+            
+            const shop = SHOPS[state.level - 1];
+            ui.summaryName.textContent = state.playerName;
+            ui.summaryScore.textContent = state.score;
+            ui.summaryShop.textContent = `Lv.${state.level} ${shop.name} ${shop.icon}`;
+            
+            ui.gameOverScreen.classList.remove('hidden');
+            setTimeout(() => {
+                ui.gameOverPanel.classList.remove('scale-0');
+                ui.gameOverPanel.classList.add('scale-100');
+            }, 50);
+            playSound('levelup');
+        }
+
+        // Setup MediaPipe Hands (AR)
+        const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+        hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.7, minTrackingConfidence: 0.7 });
+        hands.onResults((results) => {
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                // ใช้จุดที่ 8 (ปลายนิ้วชี้)
+                const indexTip = results.multiHandLandmarks[0][8];
+                state.fingerPos = { x: (1 - indexTip.x) * canvas.width, y: indexTip.y * canvas.height };
+            }
+        });
+
+        // สำรอง (Fallback): ถ้ากล้องพัง ให้ใช้เมาส์คลิก หรือ เอานิ้วจิ้มหน้าจอได้
+        function handleManualInput(e) {
+            if (!state.isPlaying) return;
+            let cx, cy;
+            if (e.touches && e.touches.length > 0) { cx = e.touches[0].clientX; cy = e.touches[0].clientY; }
+            else { cx = e.clientX; cy = e.clientY; }
+            state.fingerPos = { x: cx, y: cy };
+            setTimeout(() => state.fingerPos = null, 100);
+        }
+        canvas.addEventListener('mousedown', handleManualInput);
+        canvas.addEventListener('touchstart', handleManualInput);
+        canvas.addEventListener('mousemove', (e) => { if (e.buttons === 1) handleManualInput(e); });
+
+        // ปุ่มเริ่มเกม
+        async function startGame(useCamera) {
+            initAudio(); playSound('pop');
+            
+            let name = ui.inputName.value.trim();
+            if (name !== "") state.playerName = name;
+            ui.displayName.textContent = state.playerName;
+
+            ui.startButtons.classList.add('hidden');
+            ui.loadingMsg.classList.remove('hidden');
+
+            if (useCamera) {
+                // เปิดกล้อง
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: 640, height: 480 } });
+                    video.srcObject = stream;
+                    
+                    const camera = new Camera(video, {
+                        onFrame: async () => { if (state.isPlaying) await hands.send({image: video}); },
+                        width: 640, height: 480
+                    });
+                    camera.start();
+                    state.cameraReady = true;
+                } catch (err) {
+                    console.warn("ไม่สามารถเปิดกล้องได้ จะสลับไปใช้ระบบสัมผัส/คลิกแทน", err);
+                    state.cameraReady = false;
+                }
+            } else {
+                state.cameraReady = false; // ปิดกล้อง
+            }
+
+            // รีเซ็ตค่าเพื่อเริ่มเล่น
+            state.score = 0;
+            state.level = 1;
+            state.timeLeft = 420; // 7 นาที
+            state.isPlaying = true;
+            state.items = [];
+            state.particles = [];
+            
+            ui.displayScore.textContent = "0";
+            ui.displayTimer.textContent = "7:00";
+            ui.displayTimer.classList.remove('text-red-600', 'animate-pulse');
+            updateShopUI();
+
+            ui.startScreen.classList.add('hidden');
+            ui.hud.classList.remove('hidden');
+
+            spawnCustomer();
+            timerInterval = setInterval(updateTimer, 1000);
+        }
+
+        function goHome() {
+            state.isPlaying = false;
+            clearInterval(timerInterval);
+            
+            // ปิดไฟกล้องเมื่อกลับหน้าหลัก
+            if (video.srcObject) {
+                video.srcObject.getTracks().forEach(track => track.stop());
+                video.srcObject = null;
+                state.cameraReady = false;
+            }
+
+            ui.gameOverScreen.classList.add('hidden');
+            ui.hud.classList.add('hidden');
+            ui.startScreen.classList.remove('hidden');
+            ui.startButtons.classList.remove('hidden');
+            ui.loadingMsg.classList.add('hidden');
+            playSound('pop');
+        }
+
+        ui.btnStartAR.addEventListener('click', () => startGame(true));
+        ui.btnStartNormal.addEventListener('click', () => startGame(false));
+        ui.btnHome.addEventListener('click', goHome);
+        
+        ui.btnRestart.addEventListener('click', () => {
+            ui.gameOverPanel.classList.remove('scale-100');
+            ui.gameOverPanel.classList.add('scale-0');
+            setTimeout(() => {
+                ui.gameOverScreen.classList.add('hidden');
+                
+                // เปิดสถานะให้เกมกลับมาเล่นได้อีกครั้ง
+                state.isPlaying = true;
+                state.items = [];
+                state.particles = [];
+                
+                state.score = 0;
+                state.level = 1;
+                state.timeLeft = 420; // 7 นาที
+                ui.displayScore.textContent = "0";
+                ui.displayTimer.textContent = "7:00";
+                ui.displayTimer.classList.remove('text-red-600', 'animate-pulse');
+                updateShopUI();
+                spawnCustomer();
+                timerInterval = setInterval(updateTimer, 1000);
+            }, 500);
+            playSound('pop');
+        });
+
+        // เริ่มลูปแอนิเมชันทันที
+        requestAnimationFrame(gameLoop);
+    </script>
+</body>
+</html>
